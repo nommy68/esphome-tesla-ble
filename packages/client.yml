@@ -1,7 +1,6 @@
 substitutions:
   tesla_vin: ""
   ble_mac_address: "00:00:00:00:00:00"
-  charging_amps_max: "32"
 
 esphome:
   on_boot:
@@ -31,7 +30,7 @@ esphome:
               "\n**********************************************************************************************");
           // EUI-48 (IEEE 802) defines a 48-bit MAC address as 6 colon-separated hex octets (XX:XX:XX:XX:XX:XX):
           // 12 hex digits + 5 colons = 17 characters, so sizeof == 18 including the null terminator.
-          static_assert("$ble_mac_address" != "00:00:00:00:00:00",
+          static_assert (std::string_view ("$ble_mac_address") != "00:00:00:00:00:00",
               "\n\n**********************************************************************************************"
               "\n***                                  IMPORTANT                                             ***"
               "\n***                                  =========                                             ***"
@@ -59,6 +58,9 @@ tesla_ble_vehicle:
   ble_client_id: ble_tesla_id
   id: tesla_ble_vehicle_id
   vin: $tesla_vin
+  charger_switch: sw_charger
+  defrost_switch: sw_defrost_car
+  cabin_overheat_protection: sel_cabin_overheat_protection
   update_interval: 10s # default
   post_wake_poll_time: 300 # How long to poll for data after car awakes (s)
   poll_data_period: 60 # Normal period when polling for data when not asleep (s)
@@ -258,6 +260,14 @@ button:
     disabled_by_default: true
 
   - platform: template
+    id: btn_get_charge_schedule_state
+    name: Get charge schedules
+    icon: mdi:download-multiple
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (tesla_ble_vehicle::BLE_CarServer_VehicleAction::GET_CHARGE_SCHEDULE_STATE, 0);
+    disabled_by_default: true
+
+  - platform: template
     id: btn_regenerate_key
     name: Regenerate key
     icon: mdi:key-change
@@ -290,19 +300,18 @@ switch:
     name: "Charger"
     optimistic: true
     icon: mdi:lightning-bolt
-#    restore_mode: RESTORE_DEFAULT_OFF
-    lambda: |-
-      if ((id(charging_state).state == "Charging") or (id(charging_state).state == "Starting") or (id(charging_state).state == "Calibrating")) {
-        return true;
-      } else {
-        return false;
-      }
+#    lambda: |-
+#      if ((id(charging_state).state == "Charging") or (id(charging_state).state == "Starting") or (id(charging_state).state == "Calibrating")) {
+#        return true;
+#      } else {
+#        return false;
+#      }
     turn_on_action:
       - lambda: |-
-          if (id(max_soc).state > id(charge_state).state) { // Only allow charging if max allowed above current charge level
+          if (id(tesla_ble_vehicle_id).get_charging_state_raw() != CarServer_ChargeState_ChargingState_Complete_tag) { // Don't allow charging if last session has completed and no more configured
             id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(tesla_ble_vehicle::BLE_CarServer_VehicleAction::SET_CHARGING_SWITCH, 1);
           } else {
-            ESP_LOGI (esphome::tesla_ble_vehicle::TAG, "Charge request rejected as charge limit %.1f <= charge level %.1f", id(max_soc).state, id(charge_state).state);
+            ESP_LOGI (esphome::tesla_ble_vehicle::TAG, "Charge request rejected as last session has completed. Reset to enable charging, eg raise the soc limit");
           }
     turn_off_action: 
       - lambda: |-
@@ -380,16 +389,18 @@ switch:
     name: Defrost car
     optimistic: true
     icon: mdi:snowflake-melt
-    lambda: |-
-      if (id(defrost_state).state != "Off") {
-        return true;
-      } else {
-        return false;
-      }
+#    lambda: |-
+#      if (id(defrost_state).state != "Off") {
+#        return true;
+#      } else {
+#        return false;
+#      }
     turn_on_action:
-      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (tesla_ble_vehicle::BLE_CarServer_VehicleAction::DEFROST_CAR, 1);
+      - lambda: |-
+          id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (tesla_ble_vehicle::BLE_CarServer_VehicleAction::DEFROST_CAR, 1);
     turn_off_action:
-      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (tesla_ble_vehicle::BLE_CarServer_VehicleAction::DEFROST_CAR, 0);
+      - lambda: |-
+          id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (tesla_ble_vehicle::BLE_CarServer_VehicleAction::DEFROST_CAR, 0);
 
   - platform: template
     id: fast_poll_if_unlocked
@@ -665,3 +676,50 @@ number:
     on_value:
       - lambda: |-
           id(tesla_ble_vehicle_id)->ble_disconnected_min_time_ = x * 1000;
+
+text:
+  - platform: template
+    name: "Delete a charging schedule"
+    id: del_charging_schedule
+    icon: mdi:delete-clock
+    mode: text
+    update_interval: 2s
+    set_action:
+      - lambda: |-
+          uint64_t id = strtoull(x.c_str(), nullptr, 10);
+          if (id == 0)
+          {
+            ESP_LOGW("client.yml", "Invalid charging schedule ID %s, schedule delete not sent", x.c_str());
+            return;
+          }
+          id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(tesla_ble_vehicle::BLE_CarServer_VehicleAction::DEL_CHARGING_SCHEDULE, 0, id);
+    disabled_by_default: true
+
+select:
+  - platform: template
+    name: "Cabin overheat protection"
+    id: sel_cabin_overheat_protection
+    icon: mdi:heat-wave
+    options:
+      - "Off"
+      - "On"
+      - "Fan"
+      - "Unknown"
+    initial_option: "Unknown"
+    set_action:
+      - lambda: |-
+          int param = 0;
+          if (x != "Unknown")
+          {
+            //if (x == "Off") // do nothing as param = 0
+            if (x == "On")
+            {
+              param = CarServer_SetCabinOverheatProtectionAction_on_tag;
+            }
+            else if (x == "Fan")
+            {
+              param = CarServer_SetCabinOverheatProtectionAction_fan_only_tag;
+            }
+            id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (tesla_ble_vehicle::BLE_CarServer_VehicleAction::SET_CABIN_OVERHEAT_PROTECTION, param);
+          }
+    disabled_by_default: true

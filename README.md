@@ -14,6 +14,8 @@ This project [PedroKTFC/esphome-tesla-ble](https://github.com/PedroKTFC/esphome-
 ## If it doesn't build
 
 I've put this section at the start because it seems people don't always read all the way to the end! So please read this section at least.
+
+Note this section is a little out of date. The precise mechanisms within the ESPHome app in Home Assistant have changed although the actual instructions are still applicable. Hunt around and you'll find them. Raise an issue if you still have problems. One day I might update this secion!
 > [!TIP]
 > **Always** start from the example yaml [`tesla-ble.example.yml`](./tesla-ble.example.yml). This has been tested many times and should work in almost every case.
 
@@ -60,6 +62,9 @@ These are implemented as switches, covers, buttons or numbers. Where indicated, 
 - Media next track (button). This is disabled by default.
 - Media previous track (button). This is disabled by default.
 - Media play/plause (button). This is disabled by default.
+- Low power mode (switch). This is disabled by default. Note the status is not reported by the car so its status is not reliable. Switching it On or Off will nevertheless cause the request to be sent to the car.
+- Keep accessory power on (switch). This is disabled by default. Note the status is not reported by the car so its status is not reliable. Switching it On or Off will nevertheless cause the request to be sent to the car.
+- Cabin overheat protection. A selector with the options `Off, On, Fan, Unknown` (Unknown cannot be selected, it's here purely to enable a status of `Unknown` - a limitation of ESPHome.) Note this control also reflects the current status, there is no equivalent sensor. This is disabled by default.
 
 ### Vehicle Information Sensors
 
@@ -97,6 +102,10 @@ There are two categories, those available even when asleep and those only when a
   - Shift state (eg Invalid, R, N, D)
   - Tyre pressures (bar). The four sensors - front left, front right, rear left, rear right - are disabled by default. 
   - Windows open/closed
+
+### Charging schedules
+
+Please refer to [charging_schedules.md](./docs/charging_schedules.md) for how to view and delete charging schedules.
 
 ### Diagnostics
 
